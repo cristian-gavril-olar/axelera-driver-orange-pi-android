@@ -772,7 +772,13 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 	mask_all_aer_errors(pdev);
 
 	dev_info(&pdev->dev, "axl_probe[01] before get_memwindow_info\n");
-	axl_aipu_get_memwindow_info(axldev, pdev);
+	/* DEBUG: bisect — skip get_memwindow_info entirely.
+	 * On Orange Pi 5 RK3588 the kernel hard-locks CPU 6 inside this
+	 * function (between [01] and [02]). Skipping it leaves
+	 * axldev->mem_win zero-initialised (devm_kcalloc); the only
+	 * caller of mem_win is the AXL_GET_MEM_WINDOW ioctl, which we
+	 * don't exercise during probe. */
+	dev_info(&pdev->dev, "axl_probe[01b] DEBUG: skipping get_memwindow_info\n");
 	dev_info(&pdev->dev, "axl_probe[02] after get_memwindow_info\n");
 
 	if (pdev->bus->self) {
