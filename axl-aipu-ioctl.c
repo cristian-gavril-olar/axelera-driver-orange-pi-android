@@ -458,7 +458,14 @@ static long sysctl_ioctl_usr_dma_xfer(struct file *file, unsigned long arg)
 	struct sg_table *sgt;
 	unsigned int pg_off;
 	int ret, i, channel, status, err;
-	enum dma_data_direction dir;
+	/*
+	 * Match the direction passed to dma_map_sgtable() below
+	 * (DMA_BIDIRECTIONAL). Map and unmap directions must agree, and
+	 * leaving 'dir' uninitialized has been observed to crash the kernel
+	 * via valid_dma_direction() BUG_ON in dma_unmap_sg_attrs() on at
+	 * least one RK3588 Android port (HelloCare).
+	 */
+	enum dma_data_direction dir = DMA_BIDIRECTIONAL;
 
 	if (copy_from_user(&xfer, (void __user *)arg, sizeof(struct dma_xfer)))
 		return -EFAULT;
