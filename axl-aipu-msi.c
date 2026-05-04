@@ -32,6 +32,28 @@
 #include "axl-aipu.h"
 #include "axl-aipu-msi.h"
 
+/*
+ * DEBUG: bisect knob inside axl_aipu_msi_init().
+ *   0  return 0 immediately (skip everything inside)
+ *   1  + irq_wrk[] init loop (struct setup only, no IRQ registration)
+ *   2  + devm_request_threaded_irq (single-MSI path, requires single_msi=1)
+ *   3  + get_cached_msi_msg
+ *   4  + axl_aipu_dma_init_imwr (writes to device IMWR registers)  (default)
+ */
+#ifndef AXL_MSI_FOPS_STAGE
+#define AXL_MSI_FOPS_STAGE 1
+#endif
+
+#define AXL_MSI_FOPS_GATE_RETURN(pdev, n) \
+	do { \
+		if (AXL_MSI_FOPS_STAGE <= (n)) { \
+			dev_info(&(pdev)->dev, \
+				 "axl_msi_fops: stopping after stage %d (AXL_MSI_FOPS_STAGE=%d)\n", \
+				 (n), AXL_MSI_FOPS_STAGE); \
+			return 0; \
+		} \
+	} while (0)
+
 /* ============================================================================
  * Forward Declarations
  * ============================================================================ */
@@ -94,6 +116,10 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 	struct device_vmsi_config_t *msi_cfg = axldev->msi_cfg;
 	int err, i;
 
+	dev_info(&pdev->dev, "axl_msi_fops enter (AXL_MSI_FOPS_STAGE=%d)\n",
+		 AXL_MSI_FOPS_STAGE);
+	AXL_MSI_FOPS_GATE_RETURN(pdev, 0);
+
 	if (msi_cfg)
 		dev_info(
 			&pdev->dev,
@@ -105,6 +131,8 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 			"Initializing MSI without VMSI config (nmsi=%d, max_msi=%d)\n",
 			axldev->nmsi, axldev->max_msi);
 
+	dev_info(&pdev->dev, "axl_msi_fops stage 1: irq_wrk[] init loop (max_msi=%d)\n",
+		 axldev->max_msi);
 	/* Initialize all irq_wrk entries */
 	for (i = 0; i < axldev->max_msi; i++) {
 		axldev->irq_wrk[i].axldev = axldev;
@@ -128,6 +156,9 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 		}
 	}
 
+	AXL_MSI_FOPS_GATE_RETURN(pdev, 1);
+
+	dev_info(&pdev->dev, "axl_msi_fops stage 2: devm_request_threaded_irq\n");
 	if (axldev->nmsi == 1) {
 		/* Single-MSI mode: one handler scans all VMSI entries */
 		char irq_name[NAME_SIZE];
@@ -203,9 +234,16 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 		}
 	}
 
+	AXL_MSI_FOPS_GATE_RETURN(pdev, 2);
+
+	dev_info(&pdev->dev, "axl_msi_fops stage 3: get_cached_msi_msg\n");
 	get_cached_msi_msg(axldev->irq_vec, &axldev->irq_msi);
+	AXL_MSI_FOPS_GATE_RETURN(pdev, 3);
+
+	dev_info(&pdev->dev, "axl_msi_fops stage 4: axl_aipu_dma_init_imwr\n");
 	axl_aipu_dma_init_imwr(axldev);
 
+	dev_info(&pdev->dev, "axl_msi_fops: complete\n");
 	return 0;
 }
 

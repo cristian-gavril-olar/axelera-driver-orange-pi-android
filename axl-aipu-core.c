@@ -185,7 +185,20 @@ MODULE_PARM_DESC(
  *   6  + axl_aipu_dma_enable_ctrl  (turn on the DMA controller)  (default)
  */
 #ifndef AXL_MSI_INIT_STAGE
-#define AXL_MSI_INIT_STAGE 2
+#define AXL_MSI_INIT_STAGE 5
+#endif
+
+/*
+ * AXL_MSI_FOPS_STAGE — sub-stages inside axl_aipu_msi_init() (the
+ * msi_fops->init callback). Relevant only when AXL_MSI_INIT_STAGE >= 5.
+ *   0  return 0 immediately, do nothing
+ *   1  + the irq_wrk[] init loop (struct setup only)
+ *   2  + devm_request_threaded_irq (single-MSI path only — needs single_msi=1)
+ *   3  + get_cached_msi_msg
+ *   4  + axl_aipu_dma_init_imwr (writes to device's IMWR registers)  (default)
+ */
+#ifndef AXL_MSI_FOPS_STAGE
+#define AXL_MSI_FOPS_STAGE 4
 #endif
 
 #define AXL_MSI_INIT_GATE_RETURN(pdev, n) \
