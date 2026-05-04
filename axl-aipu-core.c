@@ -100,6 +100,26 @@ MODULE_PARM_DESC(
 	enable_sg_host_dma,
 	"Enable host sglist and xfer via dma engine (default 0 disabled)");
 
+/*
+ * Default OFF. The probe-time Gen3 link-retrain block trusts the
+ * upstream bridge's LNKCAP, but on platforms whose root-port reports
+ * Gen3-capable while the underlying PHY only physically supports
+ * Gen2 or below (Rockchip RK3588 pcie2x1l2 / Orange Pi 5 M.2 slot,
+ * confirmed) the resulting LNKCTL2 write + retrain triggers a
+ * controller-level fault that destabilises the kernel: a NULL
+ * notifier callback fires from cpu_pm_enter() the next time any CPU
+ * goes idle, oopses with PC=0x0 and Comm=swapper/N, and the system
+ * deadlocks with the modprobe thread holding probe()'s caller stuck.
+ *
+ * Set force_gen3_retrain=1 only on hardware where you know both
+ * endpoints AND the PHY support Gen3.
+ */
+unsigned int force_gen3_retrain = 0;
+module_param(force_gen3_retrain, uint, 0644);
+MODULE_PARM_DESC(
+	force_gen3_retrain,
+	"Force-retrain the upstream PCIe link to Gen3 in probe (default 0 disabled). Causes a NULL CPU-PM notifier oops on RK3588 OPi5 — leave off there.");
+
 static unsigned int dma_trace_entries = 4000;
 module_param(dma_trace_entries, uint, 0644);
 MODULE_PARM_DESC(dma_trace_entries,
@@ -766,7 +786,8 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 		pcie_capability_read_word(pdev->bus->self, PCI_EXP_LNKSTA,
 					  &lnksta);
 		lnksta = (lnksta & PCI_EXP_LNKSTA_CLS);
-		if ((lnkcap >= PCI_EXP_LNKCAP_SLS_8_0GB) &&
+		if (force_gen3_retrain &&
+		    (lnkcap >= PCI_EXP_LNKCAP_SLS_8_0GB) &&
 		    (lnksta < PCI_EXP_LNKSTA_CLS_8_0GB)) {
 			dev_warn(&pdev->dev, "Host cap Gen%d - current Gen%d\n",
 				 lnkcap, lnksta);
