@@ -159,7 +159,7 @@ MODULE_PARM_DESC(
  * ================================================================
  */
 #ifndef AXL_PROBE_STAGE
-#define AXL_PROBE_STAGE 0
+#define AXL_PROBE_STAGE 2
 #endif
 #ifndef AXL_PCI_INIT_STAGE
 #define AXL_PCI_INIT_STAGE 9
@@ -174,18 +174,25 @@ MODULE_PARM_DESC(
 	dev_info(&(pdev)->dev, prefix " stage %d: %s\n", (n), (descr))
 
 /*
- * Returns 0 from the enclosing function if the requested stage <= n.
- * Place this AFTER the step labelled n. If the gate fires, we print
- * a clear "stopping after stage n" line so the operator knows the
- * driver intentionally stopped (not silently failed).
+ * Returns -ENODEV from the enclosing function if the requested stage
+ * <= n. We return -ENODEV (NOT 0) so that the kernel does NOT consider
+ * the device bound; otherwise axl_aipu_remove() would later run on a
+ * partially-initialised axldev, dereference uninitialised fields
+ * (pci_get_drvdata returns NULL because pci_set_drvdata isn't reached
+ * until pci_init stage 4), and the kernel would oops on rmmod / reboot
+ * / USB hotplug.
+ *
+ * At intermediate stages the goal is "module loads + no device is
+ * bound, kernel is stable enough to keep ramoops printk visible". At
+ * the final stage (default) probe succeeds and binds normally.
  */
 #define AXL_PROBE_GATE_RETURN(pdev, n) \
 	do { \
 		if (AXL_PROBE_STAGE <= (n)) { \
 			dev_info(&(pdev)->dev, \
-				 "axl_probe: stopping after stage %d (AXL_PROBE_STAGE=%d)\n", \
+				 "axl_probe: stopping after stage %d (AXL_PROBE_STAGE=%d), returning -ENODEV\n", \
 				 (n), AXL_PROBE_STAGE); \
-			return 0; \
+			return -ENODEV; \
 		} \
 	} while (0)
 
@@ -193,9 +200,9 @@ MODULE_PARM_DESC(
 	do { \
 		if (AXL_PCI_INIT_STAGE <= (n)) { \
 			dev_info(&(pdev)->dev, \
-				 "axl_pci_init: stopping after stage %d (AXL_PCI_INIT_STAGE=%d)\n", \
+				 "axl_pci_init: stopping after stage %d (AXL_PCI_INIT_STAGE=%d), returning -ENODEV\n", \
 				 (n), AXL_PCI_INIT_STAGE); \
-			return 0; \
+			return -ENODEV; \
 		} \
 	} while (0)
 
