@@ -159,11 +159,36 @@ MODULE_PARM_DESC(
  * ================================================================
  */
 #ifndef AXL_PROBE_STAGE
-#define AXL_PROBE_STAGE 2
+#define AXL_PROBE_STAGE 12
 #endif
 #ifndef AXL_PCI_INIT_STAGE
 #define AXL_PCI_INIT_STAGE 9
 #endif
+
+/*
+ * AXL_MSI_INIT_STAGE — sub-stages inside axl_pci_msi_init,
+ * relevant only when AXL_PROBE_STAGE >= 12.
+ *   0  return -ENODEV immediately (no MSI work)
+ *   1  + pci_msi_vec_count
+ *   2  + pci_alloc_irq_vectors (the kernel-side IRQ allocation)
+ *   3  + devm_kcalloc for irq_wrk / vmsi_count
+ *   4  + pci_irq_vector lookup
+ *   5  + axldev->msi_fops->init(axldev)  (device-side MSI register writes)
+ *   6  + axl_aipu_dma_enable_ctrl  (turn on the DMA controller)  (default)
+ */
+#ifndef AXL_MSI_INIT_STAGE
+#define AXL_MSI_INIT_STAGE 1
+#endif
+
+#define AXL_MSI_INIT_GATE_RETURN(pdev, n) \
+	do { \
+		if (AXL_MSI_INIT_STAGE <= (n)) { \
+			dev_info(&(pdev)->dev, \
+				 "axl_msi_init: stopping after stage %d (AXL_MSI_INIT_STAGE=%d), returning -ENODEV\n", \
+				 (n), AXL_MSI_INIT_STAGE); \
+			return -ENODEV; \
+		} \
+	} while (0)
 
 /*
  * Print "axl_probe stage N: <descr>" before running step N. Use this
@@ -604,8 +629,13 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 {
 	int err = 0, nmsi;
 
+	dev_info(&pdev->dev, "axl_msi_init enter (AXL_MSI_INIT_STAGE=%d)\n",
+		 AXL_MSI_INIT_STAGE);
+
+	AXL_MSI_INIT_GATE_RETURN(pdev, 0);
+	AXL_DBG_PRE(pdev, "axl_msi_init", 1, "pci_msi_vec_count");
 	nmsi = pci_msi_vec_count(pdev);
-	dev_dbg(&pdev->dev, "MSI available %d\n", nmsi);
+	dev_info(&pdev->dev, "MSI available %d\n", nmsi);
 
 	if (nmsi != 32) {
 		dev_warn(&pdev->dev, "Wrong msi number %d\n", nmsi);
@@ -613,7 +643,9 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 	}
 	if (single_msi)
 		nmsi = 1;
+	AXL_MSI_INIT_GATE_RETURN(pdev, 1);
 
+	AXL_DBG_PRE(pdev, "axl_msi_init", 2, "pci_alloc_irq_vectors");
 	err = pci_alloc_irq_vectors(pdev, 1, nmsi, PCI_IRQ_MSI);
 	if (err < 0) {
 		dev_err(&pdev->dev, "Failed to enable MSI (%x)\n", err);
@@ -621,7 +653,9 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 	} else
 		dev_info(&pdev->dev, "MSI registered %d (%d)\n", nmsi, err);
 	axldev->nmsi = err;
+	AXL_MSI_INIT_GATE_RETURN(pdev, 2);
 
+	AXL_DBG_PRE(pdev, "axl_msi_init", 3, "devm_kcalloc irq_wrk + vmsi_count");
 	axldev->irq_wrk = devm_kcalloc(&pdev->dev, MAX_VIRT_MSI,
 				       sizeof(*axldev->irq_wrk), GFP_KERNEL);
 	if (!axldev->irq_wrk)
@@ -632,11 +666,14 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 					  GFP_KERNEL);
 	if (!axldev->vmsi_count)
 		return -ENOMEM;
+	AXL_MSI_INIT_GATE_RETURN(pdev, 3);
 
+	AXL_DBG_PRE(pdev, "axl_msi_init", 4, "pci_irq_vector lookup");
 	axldev->irq_vec = pci_irq_vector(pdev, 0);
 	dev_info(&pdev->dev, "irq vec number %d\n", axldev->irq_vec);
+	AXL_MSI_INIT_GATE_RETURN(pdev, 4);
 
-	/* Initialize and register IRQ handlers via MSI-specific init function */
+	AXL_DBG_PRE(pdev, "axl_msi_init", 5, "msi_fops->init (device-side MSI register writes)");
 	err = axldev->msi_fops->init(axldev);
 	if (err)
 		return err;
@@ -644,9 +681,12 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 	dev_dbg(&pdev->dev, "msi_info 0x%x 0x%x : 0x%x\n",
 		axldev->irq_msi.address_hi, axldev->irq_msi.address_lo,
 		axldev->irq_msi.data);
+	AXL_MSI_INIT_GATE_RETURN(pdev, 5);
 
+	AXL_DBG_PRE(pdev, "axl_msi_init", 6, "axl_aipu_dma_enable_ctrl");
 	axl_aipu_dma_enable_ctrl(axldev);
 
+	dev_info(&pdev->dev, "axl_msi_init: complete\n");
 	return 0;
 }
 static void axl_aipu_dma_imwr_restore(struct axl_pcie_aipu_dev *axldev)
