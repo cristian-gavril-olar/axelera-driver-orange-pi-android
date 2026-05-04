@@ -119,6 +119,87 @@ MODULE_PARM_DESC(
 	"Enable host sglist and xfer via dma engine (default 0 disabled)");
 
 /*
+ * ================================================================
+ * DEBUG: probe-stage bisect knobs.
+ *
+ * On RK3588 / Orange Pi 5 some step inside axl_aipu_probe wedges a
+ * CPU. We don't have a working serial console, so to identify which
+ * step we ratchet up the gate, build, insmod, observe survival.
+ *
+ * AXL_PROBE_STAGE — top-level axl_aipu_probe steps:
+ *    0  return immediately (just driver registration via module init)
+ *    1  + axl_aipu_allocate_device
+ *    2  + axl_aipu_pci_init        (further gated by AXL_PCI_INIT_STAGE)
+ *    3  + axl_aipu_register_dev_fops
+ *    4  + axl_aipu_config_dev_msi
+ *    5  + axl_aipu_dev_dynmem_init
+ *    6  + mutex_init / spin_lock_init
+ *    7  + axl_aipu_drv_dma_alloc
+ *    8  + axl_aipu_trace_alloc
+ *    9  + axl_aipu_create_device
+ *   10  + axl_aipu_drv_recovery_init
+ *   11  + axl_aipu_dma_init
+ *   12  + axl_pci_msi_init
+ *   13  + axl_aipu_dev_debugfs_init    (full probe — production default)
+ *
+ * AXL_PCI_INIT_STAGE — granular stages inside axl_aipu_pci_init,
+ * relevant only when AXL_PROBE_STAGE >= 2:
+ *    0  return immediately
+ *    1  + pci_aer_clear_nonfatal_status + pcim_enable_device
+ *    2  + pci_set_master
+ *    3  + axl_set_dma_mask
+ *    4  + pci_set_drvdata + axldev->pdev = pdev
+ *    5  + axl_aipu_pci_resources_init
+ *    6  + disable_serr_bit + mask_all_aer_errors
+ *    7  + axl_aipu_get_memwindow_info
+ *    8  + bus->self link cap reads (Gen3 retrain stays opt-in)
+ *    9  + pci_save_state + pci_store_saved_state    (default — full)
+ *
+ * Edit the values below to bisect; rebuild + insmod after each change.
+ * ================================================================
+ */
+#ifndef AXL_PROBE_STAGE
+#define AXL_PROBE_STAGE 0
+#endif
+#ifndef AXL_PCI_INIT_STAGE
+#define AXL_PCI_INIT_STAGE 9
+#endif
+
+/*
+ * Print "axl_probe stage N: <descr>" before running step N. Use this
+ * BEFORE the step itself so when the kernel hangs, ramoops/console shows
+ * which step was last announced — that's the one wedged.
+ */
+#define AXL_DBG_PRE(pdev, prefix, n, descr) \
+	dev_info(&(pdev)->dev, prefix " stage %d: %s\n", (n), (descr))
+
+/*
+ * Returns 0 from the enclosing function if the requested stage <= n.
+ * Place this AFTER the step labelled n. If the gate fires, we print
+ * a clear "stopping after stage n" line so the operator knows the
+ * driver intentionally stopped (not silently failed).
+ */
+#define AXL_PROBE_GATE_RETURN(pdev, n) \
+	do { \
+		if (AXL_PROBE_STAGE <= (n)) { \
+			dev_info(&(pdev)->dev, \
+				 "axl_probe: stopping after stage %d (AXL_PROBE_STAGE=%d)\n", \
+				 (n), AXL_PROBE_STAGE); \
+			return 0; \
+		} \
+	} while (0)
+
+#define AXL_PCI_INIT_GATE_RETURN(pdev, n) \
+	do { \
+		if (AXL_PCI_INIT_STAGE <= (n)) { \
+			dev_info(&(pdev)->dev, \
+				 "axl_pci_init: stopping after stage %d (AXL_PCI_INIT_STAGE=%d)\n", \
+				 (n), AXL_PCI_INIT_STAGE); \
+			return 0; \
+		} \
+	} while (0)
+
+/*
  * Default OFF. The probe-time Gen3 link-retrain block trusts the
  * upstream bridge's LNKCAP, but on platforms whose root-port reports
  * Gen3-capable while the underlying PHY only physically supports
@@ -653,9 +734,8 @@ static int axl_aipu_check_pes_group(struct pci_dev *pdev)
 	return upstream_port->bus->number;
 }
 
-static void __maybe_unused
-axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
-			    struct pci_dev *pdev)
+static void axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
+					struct pci_dev *pdev)
 {
 	int flags, bar;
 	resource_size_t start, size, np_max_size = 0, p_max_size = 0;
@@ -763,10 +843,15 @@ static int axl_aipu_pci_resources_init(struct axl_pcie_aipu_dev *axldev)
 static int axl_aipu_pci_init(struct pci_dev *pdev,
 			     struct axl_pcie_aipu_dev *axldev)
 {
-	int err;
+	int err = 0;
 	u16 reg16, lnkctl2, lnksta;
 	u32 reg32, lnkcap;
 
+	dev_info(&pdev->dev, "axl_pci_init enter (AXL_PCI_INIT_STAGE=%d)\n",
+		 AXL_PCI_INIT_STAGE);
+
+	AXL_PCI_INIT_GATE_RETURN(pdev, 0);
+	AXL_DBG_PRE(pdev, "axl_pci_init", 1, "pci_aer_clear_nonfatal_status + pcim_enable_device");
 	pci_aer_clear_nonfatal_status(pdev);
 	err = pcim_enable_device(pdev);
 	if (err) {
@@ -774,32 +859,39 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 		axl_aipu_free_minor(axldev);
 		return err;
 	}
-	pci_set_master(pdev);
+	AXL_PCI_INIT_GATE_RETURN(pdev, 1);
 
+	AXL_DBG_PRE(pdev, "axl_pci_init", 2, "pci_set_master");
+	pci_set_master(pdev);
+	AXL_PCI_INIT_GATE_RETURN(pdev, 2);
+
+	AXL_DBG_PRE(pdev, "axl_pci_init", 3, "axl_set_dma_mask");
 	err = axl_set_dma_mask(pdev);
 	if (err)
 		goto pci_err_out;
+	AXL_PCI_INIT_GATE_RETURN(pdev, 3);
 
+	AXL_DBG_PRE(pdev, "axl_pci_init", 4, "pci_set_drvdata + axldev->pdev = pdev");
 	pci_set_drvdata(pdev, axldev);
 	axldev->pdev = pdev;
+	AXL_PCI_INIT_GATE_RETURN(pdev, 4);
 
+	AXL_DBG_PRE(pdev, "axl_pci_init", 5, "axl_aipu_pci_resources_init");
 	err = axl_aipu_pci_resources_init(axldev);
 	if (err)
 		goto pci_err_out;
+	AXL_PCI_INIT_GATE_RETURN(pdev, 5);
 
+	AXL_DBG_PRE(pdev, "axl_pci_init", 6, "disable_serr_bit + mask_all_aer_errors");
 	disable_serr_bit(pdev);
 	mask_all_aer_errors(pdev);
+	AXL_PCI_INIT_GATE_RETURN(pdev, 6);
 
-	dev_info(&pdev->dev, "axl_probe[01] before get_memwindow_info\n");
-	/* DEBUG: bisect — skip get_memwindow_info entirely.
-	 * On Orange Pi 5 RK3588 the kernel hard-locks CPU 6 inside this
-	 * function (between [01] and [02]). Skipping it leaves
-	 * axldev->mem_win zero-initialised (devm_kcalloc); the only
-	 * caller of mem_win is the AXL_GET_MEM_WINDOW ioctl, which we
-	 * don't exercise during probe. */
-	dev_info(&pdev->dev, "axl_probe[01b] DEBUG: skipping get_memwindow_info\n");
-	dev_info(&pdev->dev, "axl_probe[02] after get_memwindow_info\n");
+	AXL_DBG_PRE(pdev, "axl_pci_init", 7, "axl_aipu_get_memwindow_info");
+	axl_aipu_get_memwindow_info(axldev, pdev);
+	AXL_PCI_INIT_GATE_RETURN(pdev, 7);
 
+	AXL_DBG_PRE(pdev, "axl_pci_init", 8, "bus->self lnkcap reads / Gen3 retrain (gated)");
 	if (pdev->bus->self) {
 		axldev->pes_group = axl_aipu_check_pes_group(pdev);
 		if (axldev->pes_group != -1) {
@@ -863,15 +955,15 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 		}
 	} else
 		dev_info(&pdev->dev, "No PCI Express Link Capability\n");
+	AXL_PCI_INIT_GATE_RETURN(pdev, 8);
 
-	dev_info(&pdev->dev, "axl_probe[03] before pci_save_state\n");
+	AXL_DBG_PRE(pdev, "axl_pci_init", 9, "pci_save_state + pci_store_saved_state");
 	pci_save_state(pdev);
-	dev_info(&pdev->dev, "axl_probe[04] before pci_store_saved_state\n");
 	axldev->pcie_state = pci_store_saved_state(pdev);
-	dev_info(&pdev->dev, "axl_probe[05] after pci_store_saved_state\n");
 	if (!axldev->pcie_state)
 		dev_err(&pdev->dev, "Fail to save pcie state\n");
 
+	dev_info(&pdev->dev, "axl_pci_init: complete\n");
 	return 0;
 
 pci_err_out:
@@ -1295,63 +1387,81 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		return -ENODEV;
 	}
 
+	dev_info(&pdev->dev, "axl_probe enter (AXL_PROBE_STAGE=%d)\n",
+		 AXL_PROBE_STAGE);
+	AXL_PROBE_GATE_RETURN(pdev, 0);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 1, "axl_aipu_allocate_device");
 	axldev = axl_aipu_allocate_device(pdev, id);
 	if (IS_ERR(axldev))
 		return PTR_ERR(axldev);
+	AXL_PROBE_GATE_RETURN(pdev, 1);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 2, "axl_aipu_pci_init");
 	err = axl_aipu_pci_init(pdev, axldev);
 	if (err)
 		goto err_out;
-	dev_info(&pdev->dev, "axl_probe[10] after pci_init\n");
+	AXL_PROBE_GATE_RETURN(pdev, 2);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 3, "axl_aipu_register_dev_fops");
 	axl_aipu_register_dev_fops(axldev);
-	dev_info(&pdev->dev, "axl_probe[11] after register_dev_fops\n");
-	axl_aipu_config_dev_msi(axldev);
-	dev_info(&pdev->dev, "axl_probe[12] after config_dev_msi\n");
-	axl_aipu_dev_dynmem_init(axldev);
-	dev_info(&pdev->dev, "axl_probe[13] after dev_dynmem_init\n");
+	AXL_PROBE_GATE_RETURN(pdev, 3);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 4, "axl_aipu_config_dev_msi");
+	axl_aipu_config_dev_msi(axldev);
+	AXL_PROBE_GATE_RETURN(pdev, 4);
+
+	AXL_DBG_PRE(pdev, "axl_probe", 5, "axl_aipu_dev_dynmem_init");
+	axl_aipu_dev_dynmem_init(axldev);
+	AXL_PROBE_GATE_RETURN(pdev, 5);
+
+	AXL_DBG_PRE(pdev, "axl_probe", 6, "mutex_init / spin_lock_init");
 	mutex_init(&axldev->mutex);
 	mutex_init(&axldev->msg_mutex);
 	mutex_init(&axldev->desc_mutex);
-
 	spin_lock_init(&axldev->msi_lock);
+	AXL_PROBE_GATE_RETURN(pdev, 6);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 7, "axl_aipu_drv_dma_alloc");
 	axl_aipu_drv_dma_alloc(axldev);
-	dev_info(&pdev->dev, "axl_probe[14] after drv_dma_alloc\n");
+	AXL_PROBE_GATE_RETURN(pdev, 7);
 
-	/* Allocate DMA trace buffer */
+	AXL_DBG_PRE(pdev, "axl_probe", 8, "axl_aipu_trace_alloc");
 	err = axl_aipu_trace_alloc(axldev, dma_trace_entries);
 	if (err)
 		dev_warn(
 			&pdev->dev,
 			"Failed to allocate DMA trace buffer, tracing disabled\n");
-	dev_info(&pdev->dev, "axl_probe[15] after trace_alloc\n");
+	AXL_PROBE_GATE_RETURN(pdev, 8);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 9, "axl_aipu_create_device");
 	err = axl_aipu_create_device(axldev);
 	if (err)
 		goto err_dev_out;
-	dev_info(&pdev->dev, "axl_probe[16] after create_device\n");
+	AXL_PROBE_GATE_RETURN(pdev, 9);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 10, "axl_aipu_drv_recovery_init");
 	err = axl_aipu_drv_recovery_init(axldev);
 	if (err)
 		goto err_dev_out;
-	dev_info(&pdev->dev, "axl_probe[17] after drv_recovery_init\n");
+	AXL_PROBE_GATE_RETURN(pdev, 10);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 11, "axl_aipu_dma_init");
 	err = axl_aipu_dma_init(axldev);
 	if (err)
 		goto err_dev_out;
-	dev_info(&pdev->dev, "axl_probe[18] after dma_init\n");
+	AXL_PROBE_GATE_RETURN(pdev, 11);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 12, "axl_pci_msi_init");
 	err = axl_pci_msi_init(pdev, axldev);
 	if (err)
 		goto err_dev_out;
-	dev_info(&pdev->dev, "axl_probe[19] after pci_msi_init\n");
+	AXL_PROBE_GATE_RETURN(pdev, 12);
 
+	AXL_DBG_PRE(pdev, "axl_probe", 13, "axl_aipu_dev_debugfs_init");
 	axl_aipu_dev_debugfs_init(axldev);
-	dev_info(&pdev->dev, "axl_probe[20] after debugfs_init - probe DONE\n");
 
+	dev_info(&pdev->dev, "axl_probe: complete\n");
 	return 0;
 
 err_dev_out:
