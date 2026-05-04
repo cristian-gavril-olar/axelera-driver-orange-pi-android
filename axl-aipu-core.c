@@ -167,7 +167,7 @@ MODULE_PARM_DESC(
  * ================================================================
  */
 #ifndef AXL_PROBE_STAGE
-#define AXL_PROBE_STAGE 12
+#define AXL_PROBE_STAGE 13
 #endif
 #ifndef AXL_PCI_INIT_STAGE
 #define AXL_PCI_INIT_STAGE 9
