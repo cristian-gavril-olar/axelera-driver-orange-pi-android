@@ -328,11 +328,13 @@ struct axl_pcie_aipu_dev {
 	struct pci_dev *pdev;
 	unsigned int dma_enabled : 1;
 	/*
-	 * Set to 1 once axl_aipu_dma_init_imwr() has been run. We don't
-	 * call it from probe (msi_fops->init) any more — touching the
-	 * HDMA channels' MSI delivery registers wedges the AXI bus on at
-	 * least one platform (RK3588 OPi5 + outband-MSI rk-pcie). Instead
-	 * sysctl_ioctl_dynmem_load() runs it post-fwload and sets this
+	 * Set to 1 once the HDMA controller has been programmed at the
+	 * end of probe — specifically axl_aipu_dma_init_imwr() (MSI
+	 * delivery + linked-list base) and axl_aipu_dma_enable_ctrl()
+	 * (per-channel ch_en). Neither runs from probe any more: on
+	 * RK3588 OPi5 + outband-MSI rk-pcie, those HDMA register writes
+	 * wedge the AXI bus before the on-device runtime is up. Instead
+	 * sysctl_ioctl_dynmem_load() runs both post-fwload and sets this
 	 * bit; DMA xfer ioctls bail with -ENXIO until it's set so a
 	 * misbehaving userspace gets a clean error rather than a stall.
 	 */

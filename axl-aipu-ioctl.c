@@ -903,19 +903,22 @@ static long sysctl_ioctl_dynmem_load(struct file *file, unsigned long arg)
 	axl_aipu_dev_dynmem_init(axldev);
 
 	/*
-	 * Deferred from msi_fops->init at probe time — see
-	 * notes/explanation-of-what-fails.md. By the time userspace has
-	 * issued AXL_IOCTL_DYNMEM_LOAD the on-device runtime is up, the
-	 * device-host shared-memory regions are populated, and it's safe
-	 * to program the HDMA channels' MSI delivery + linked-list
-	 * descriptor registers. Idempotent on re-flash: a second
-	 * DYNMEM_LOAD just reprograms with whatever's currently cached
-	 * in axldev->irq_msi.
+	 * Deferred from msi_fops->init / axl_pci_msi_init at probe time —
+	 * see notes/explanation-of-what-fails.md. By the time userspace
+	 * has issued AXL_IOCTL_DYNMEM_LOAD the on-device runtime is up,
+	 * the device-host shared-memory regions are populated, and it's
+	 * safe to program the HDMA channels' MSI delivery + linked-list
+	 * descriptor registers and to flip the per-channel ch_en bits.
+	 * Order matches the original probe: dma_init_imwr first (program
+	 * delivery), then dma_enable_ctrl (flip ch_en). Idempotent on
+	 * re-flash: a second DYNMEM_LOAD just reprograms with whatever's
+	 * currently cached in axldev->irq_msi.
 	 */
 	if (!axldev->msi_imwr_primed) {
 		dev_info(&pdev->dev,
-			 "AXL_IOCTL_DYNMEM_LOAD: priming HDMA MSI delivery (deferred from probe)\n");
+			 "AXL_IOCTL_DYNMEM_LOAD: priming HDMA MSI delivery + enabling channels (deferred from probe)\n");
 		axl_aipu_dma_init_imwr(axldev);
+		axl_aipu_dma_enable_ctrl(axldev);
 		axldev->msi_imwr_primed = 1;
 	}
 
