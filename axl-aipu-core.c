@@ -653,8 +653,9 @@ static int axl_aipu_check_pes_group(struct pci_dev *pdev)
 	return upstream_port->bus->number;
 }
 
-static void axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
-					struct pci_dev *pdev)
+static void __maybe_unused
+axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
+			    struct pci_dev *pdev)
 {
 	int flags, bar;
 	resource_size_t start, size, np_max_size = 0, p_max_size = 0;
