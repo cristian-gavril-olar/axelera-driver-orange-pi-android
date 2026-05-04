@@ -642,14 +642,21 @@ static void axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
 	resource_size_t start, size, np_max_size = 0, p_max_size = 0;
 	resource_size_t np_min = 0, np_max = 0, p_min = 0, p_max = 0;
 
+	dev_info(&pdev->dev, "memwin enter, axldev=%px mem_win=%px\n",
+		 axldev, axldev ? axldev->mem_win : NULL);
 	for (bar = 0; bar < PCI_STD_NUM_BARS; bar++) {
+		dev_info(&pdev->dev, "memwin bar=%d: read flags\n", bar);
 		flags = pci_resource_flags(pdev, bar);
+		dev_info(&pdev->dev, "memwin bar=%d: flags=0x%x\n", bar, flags);
 		if (!(flags & IORESOURCE_MEM))
 			continue;
 		size = pci_resource_len(pdev, bar);
 		start = pci_resource_start(pdev, bar);
+		dev_info(&pdev->dev, "memwin bar=%d: start=0x%llx size=0x%llx, before write\n",
+			 bar, (u64)start, (u64)size);
 		axldev->mem_win->base_res[bar] = (__u64)start;
 		axldev->mem_win->size_res[bar] = (__u64)size;
+		dev_info(&pdev->dev, "memwin bar=%d: after write\n", bar);
 
 		dev_dbg(&pdev->dev, "Memory (%d) %s 0x%016llx 0x%016llx\n", bar,
 			flags & IORESOURCE_PREFETCH ? "prefetch" :
@@ -673,6 +680,7 @@ static void axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
 		np_min = min_t(resource_size_t, start, np_min);
 		np_max_size = max(size, np_max_size);
 	}
+	dev_info(&pdev->dev, "memwin: loop done, computing summary\n");
 	axldev->mem_win->np_base = (__u64)np_min;
 	axldev->mem_win->np_size = (__u64)(np_max - np_min + np_max_size);
 	axldev->mem_win->p_base = (__u64)p_min;
@@ -681,6 +689,7 @@ static void axl_aipu_get_memwindow_info(struct axl_pcie_aipu_dev *axldev,
 		 axldev->mem_win->p_base, axldev->mem_win->p_size);
 	dev_info(&pdev->dev, "Memory windows no-prefetch 0x%016llx 0x%016llx\n",
 		 axldev->mem_win->np_base, axldev->mem_win->np_size);
+	dev_info(&pdev->dev, "memwin exit\n");
 }
 
 #define BAR_0 0
