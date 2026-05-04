@@ -41,7 +41,7 @@
  *   4  + axl_aipu_dma_init_imwr (writes to device IMWR registers)  (default)
  */
 #ifndef AXL_MSI_FOPS_STAGE
-#define AXL_MSI_FOPS_STAGE 1
+#define AXL_MSI_FOPS_STAGE 0
 #endif
 
 #define AXL_MSI_FOPS_GATE_RETURN(pdev, n) \
@@ -240,8 +240,11 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 	get_cached_msi_msg(axldev->irq_vec, &axldev->irq_msi);
 	AXL_MSI_FOPS_GATE_RETURN(pdev, 3);
 
-	dev_info(&pdev->dev, "axl_msi_fops stage 4: axl_aipu_dma_init_imwr\n");
-	axl_aipu_dma_init_imwr(axldev);
+	/* DEFERRED: see Metis-side comment in axl-aipu-msi-metis.c. The
+	 * matching call now lives in sysctl_ioctl_dynmem_load. */
+	axldev->msi_imwr_primed = 0;
+	dev_info(&pdev->dev,
+		 "axl_msi_fops: dma_init_imwr deferred to AXL_IOCTL_DYNMEM_LOAD\n");
 
 	dev_info(&pdev->dev, "axl_msi_fops: complete\n");
 	return 0;
