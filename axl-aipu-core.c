@@ -100,7 +100,15 @@ MODULE_PARM_DESC(irq_timeout, "IRQ timeout in seconds (default 1 sec)");
 MODULE_PARM_DESC(enable_dmabuf_sync,
 		 "Enable dmabuf sync : 1 enable, 0 disable");
 
-static unsigned int single_msi = 0;
+/*
+ * On Orange Pi 5 / RK3588 the kernel's rk-pcie driver runs in
+ * "outband MSI" mode (rk-pcie fe190000.pcie: IRQ msi not found,
+ * use outband MSI support). pci_alloc_irq_vectors(..., 32, PCI_IRQ_MSI)
+ * hard-locks the kernel via the bisect; pci_msi_vec_count() returns 32
+ * cleanly, so the count read is fine — it's the bulk allocation that
+ * wedges. Try the single-MSI path first as the lower-risk fallback.
+ */
+static unsigned int single_msi = 1;
 module_param(single_msi, uint, 0644);
 
 unsigned int dma_poll = 0;
@@ -177,7 +185,7 @@ MODULE_PARM_DESC(
  *   6  + axl_aipu_dma_enable_ctrl  (turn on the DMA controller)  (default)
  */
 #ifndef AXL_MSI_INIT_STAGE
-#define AXL_MSI_INIT_STAGE 1
+#define AXL_MSI_INIT_STAGE 2
 #endif
 
 #define AXL_MSI_INIT_GATE_RETURN(pdev, n) \
