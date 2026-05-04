@@ -63,7 +63,7 @@ static int krn_irq_ck(struct axl_pcie_aipu_dev *axldev, int id)
  *   4  + axl_aipu_dma_init_imwr (writes to device IMWR registers)  (default)
  */
 #ifndef AXL_MSI_METIS_FOPS_STAGE
-#define AXL_MSI_METIS_FOPS_STAGE 1
+#define AXL_MSI_METIS_FOPS_STAGE 4
 #endif
 
 #define AXL_MSI_METIS_FOPS_GATE_RETURN(pdev, n) \

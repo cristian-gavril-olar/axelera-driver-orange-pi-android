@@ -228,16 +228,30 @@ MODULE_PARM_DESC(
  * until pci_init stage 4), and the kernel would oops on rmmod / reboot
  * / USB hotplug.
  *
+ * Before returning, axl_probe_partial_unwind() undoes the resources
+ * the partially-completed probe set up — most importantly the
+ * kthread started in stage 10 (drv_recovery_init), which is NOT
+ * devm-managed and would otherwise outlive the probe failure, hold
+ * a stale pointer to the soon-to-be-freed axldev and module text,
+ * and oops the kernel a few seconds later when something pokes it
+ * (rmmod, USB hotplug, the install script's `rmmod metis` between
+ * tests). Same for the workqueues from stage 11.
+ *
  * At intermediate stages the goal is "module loads + no device is
- * bound, kernel is stable enough to keep ramoops printk visible". At
- * the final stage (default) probe succeeds and binds normally.
+ * bound, kernel is stable, no leaked kthreads/workqueues". At the
+ * final stage (default) probe succeeds and binds normally.
  */
-#define AXL_PROBE_GATE_RETURN(pdev, n) \
+static void axl_probe_partial_unwind(struct pci_dev *pdev,
+				     struct axl_pcie_aipu_dev *axldev,
+				     int stage_reached);
+
+#define AXL_PROBE_GATE_RETURN(pdev, axldev, n) \
 	do { \
 		if (AXL_PROBE_STAGE <= (n)) { \
 			dev_info(&(pdev)->dev, \
 				 "axl_probe: stopping after stage %d (AXL_PROBE_STAGE=%d), returning -ENODEV\n", \
 				 (n), AXL_PROBE_STAGE); \
+			axl_probe_partial_unwind((pdev), (axldev), (n)); \
 			return -ENODEV; \
 		} \
 	} while (0)
@@ -1432,6 +1446,69 @@ static int axl_aipu_trace_alloc(struct axl_pcie_aipu_dev *axldev,
 	return 0;
 }
 
+/*
+ * axl_probe_partial_unwind — undo the resources allocated by probe up
+ * to (and including) the named stage, in reverse order. Used by the
+ * AXL_PROBE_GATE_RETURN bisect macro: when an intermediate stage gate
+ * fires we return -ENODEV from probe, but devres only frees devm-
+ * managed allocations — non-devm resources (the recovery kthread,
+ * DMA workqueues) would otherwise leak and oops the kernel later
+ * when the kthread accesses freed module memory.
+ *
+ * The stage numbers correspond to the AXL_PROBE_STAGE comment block.
+ * Each `if (stage_reached >= N)` block undoes whatever stage N set up.
+ * Anything devm-managed (devm_kzalloc'd buffers, devm_request_irq'd
+ * handlers, pcim_* resources, etc.) is intentionally NOT freed here:
+ * devres_release_all() in the kernel's probe-failure path handles
+ * those for us.
+ */
+static void axl_probe_partial_unwind(struct pci_dev *pdev,
+				     struct axl_pcie_aipu_dev *axldev,
+				     int stage_reached)
+{
+	if (!axldev)
+		return;
+
+	dev_info(&pdev->dev,
+		 "axl_probe partial-unwind: stage_reached=%d\n", stage_reached);
+
+	if (stage_reached >= 11) {
+		dev_info(&pdev->dev, "  unwind: dma_deinit (stage 11 workqueues)\n");
+		axl_aipu_dma_deinit(axldev);
+	}
+	if (stage_reached >= 10 && axldev->recovery) {
+		dev_info(&pdev->dev, "  unwind: kthread_stop(recovery) (stage 10)\n");
+		kthread_stop(axldev->recovery);
+		axldev->recovery = NULL;
+	}
+	if (stage_reached >= 9) {
+		dev_info(&pdev->dev, "  unwind: device_destroy + cdev_del (stage 9)\n");
+		device_destroy(axl_aipu_class,
+			       MKDEV(axl_aipu_major, axldev->minor));
+		cdev_del(&axldev->cdev);
+	}
+	if (stage_reached >= 7) {
+		dev_info(&pdev->dev, "  unwind: drv_dma_free (stage 7)\n");
+		axl_aipu_drv_dma_free(axldev);
+	}
+	if (stage_reached >= 1) {
+		dev_info(&pdev->dev, "  unwind: free_minor (stage 1)\n");
+		axl_aipu_free_minor(axldev);
+	}
+	if (stage_reached >= 2) {
+		if (axldev->pcie_state) {
+			dev_info(&pdev->dev,
+				 "  unwind: kfree(pcie_state) (stage 2)\n");
+			kfree(axldev->pcie_state);
+			axldev->pcie_state = NULL;
+		}
+		dev_info(&pdev->dev, "  unwind: pci_deinit (stage 2)\n");
+		axl_aipu_pci_deinit(pdev);
+	}
+
+	dev_info(&pdev->dev, "axl_probe partial-unwind: complete\n");
+}
+
 static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct axl_pcie_aipu_dev *axldev;
@@ -1457,42 +1534,42 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	dev_info(&pdev->dev, "axl_probe enter (AXL_PROBE_STAGE=%d)\n",
 		 AXL_PROBE_STAGE);
-	AXL_PROBE_GATE_RETURN(pdev, 0);
+	AXL_PROBE_GATE_RETURN(pdev, NULL, 0);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 1, "axl_aipu_allocate_device");
 	axldev = axl_aipu_allocate_device(pdev, id);
 	if (IS_ERR(axldev))
 		return PTR_ERR(axldev);
-	AXL_PROBE_GATE_RETURN(pdev, 1);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 1);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 2, "axl_aipu_pci_init");
 	err = axl_aipu_pci_init(pdev, axldev);
 	if (err)
 		goto err_out;
-	AXL_PROBE_GATE_RETURN(pdev, 2);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 2);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 3, "axl_aipu_register_dev_fops");
 	axl_aipu_register_dev_fops(axldev);
-	AXL_PROBE_GATE_RETURN(pdev, 3);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 3);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 4, "axl_aipu_config_dev_msi");
 	axl_aipu_config_dev_msi(axldev);
-	AXL_PROBE_GATE_RETURN(pdev, 4);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 4);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 5, "axl_aipu_dev_dynmem_init");
 	axl_aipu_dev_dynmem_init(axldev);
-	AXL_PROBE_GATE_RETURN(pdev, 5);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 5);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 6, "mutex_init / spin_lock_init");
 	mutex_init(&axldev->mutex);
 	mutex_init(&axldev->msg_mutex);
 	mutex_init(&axldev->desc_mutex);
 	spin_lock_init(&axldev->msi_lock);
-	AXL_PROBE_GATE_RETURN(pdev, 6);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 6);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 7, "axl_aipu_drv_dma_alloc");
 	axl_aipu_drv_dma_alloc(axldev);
-	AXL_PROBE_GATE_RETURN(pdev, 7);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 7);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 8, "axl_aipu_trace_alloc");
 	err = axl_aipu_trace_alloc(axldev, dma_trace_entries);
@@ -1500,31 +1577,31 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		dev_warn(
 			&pdev->dev,
 			"Failed to allocate DMA trace buffer, tracing disabled\n");
-	AXL_PROBE_GATE_RETURN(pdev, 8);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 8);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 9, "axl_aipu_create_device");
 	err = axl_aipu_create_device(axldev);
 	if (err)
 		goto err_dev_out;
-	AXL_PROBE_GATE_RETURN(pdev, 9);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 9);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 10, "axl_aipu_drv_recovery_init");
 	err = axl_aipu_drv_recovery_init(axldev);
 	if (err)
 		goto err_dev_out;
-	AXL_PROBE_GATE_RETURN(pdev, 10);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 10);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 11, "axl_aipu_dma_init");
 	err = axl_aipu_dma_init(axldev);
 	if (err)
 		goto err_dev_out;
-	AXL_PROBE_GATE_RETURN(pdev, 11);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 11);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 12, "axl_pci_msi_init");
 	err = axl_pci_msi_init(pdev, axldev);
 	if (err)
 		goto err_dev_out;
-	AXL_PROBE_GATE_RETURN(pdev, 12);
+	AXL_PROBE_GATE_RETURN(pdev, axldev, 12);
 
 	AXL_DBG_PRE(pdev, "axl_probe", 13, "axl_aipu_dev_debugfs_init");
 	axl_aipu_dev_debugfs_init(axldev);
