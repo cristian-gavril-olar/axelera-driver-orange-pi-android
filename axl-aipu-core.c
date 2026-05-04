@@ -762,7 +762,9 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 	disable_serr_bit(pdev);
 	mask_all_aer_errors(pdev);
 
+	dev_info(&pdev->dev, "axl_probe[01] before get_memwindow_info\n");
 	axl_aipu_get_memwindow_info(axldev, pdev);
+	dev_info(&pdev->dev, "axl_probe[02] after get_memwindow_info\n");
 
 	if (pdev->bus->self) {
 		axldev->pes_group = axl_aipu_check_pes_group(pdev);
@@ -828,8 +830,11 @@ static int axl_aipu_pci_init(struct pci_dev *pdev,
 	} else
 		dev_info(&pdev->dev, "No PCI Express Link Capability\n");
 
+	dev_info(&pdev->dev, "axl_probe[03] before pci_save_state\n");
 	pci_save_state(pdev);
+	dev_info(&pdev->dev, "axl_probe[04] before pci_store_saved_state\n");
 	axldev->pcie_state = pci_store_saved_state(pdev);
+	dev_info(&pdev->dev, "axl_probe[05] after pci_store_saved_state\n");
 	if (!axldev->pcie_state)
 		dev_err(&pdev->dev, "Fail to save pcie state\n");
 
@@ -1245,10 +1250,14 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	err = axl_aipu_pci_init(pdev, axldev);
 	if (err)
 		goto err_out;
+	dev_info(&pdev->dev, "axl_probe[10] after pci_init\n");
 
 	axl_aipu_register_dev_fops(axldev);
+	dev_info(&pdev->dev, "axl_probe[11] after register_dev_fops\n");
 	axl_aipu_config_dev_msi(axldev);
+	dev_info(&pdev->dev, "axl_probe[12] after config_dev_msi\n");
 	axl_aipu_dev_dynmem_init(axldev);
+	dev_info(&pdev->dev, "axl_probe[13] after dev_dynmem_init\n");
 
 	mutex_init(&axldev->mutex);
 	mutex_init(&axldev->msg_mutex);
@@ -1257,6 +1266,7 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	spin_lock_init(&axldev->msi_lock);
 
 	axl_aipu_drv_dma_alloc(axldev);
+	dev_info(&pdev->dev, "axl_probe[14] after drv_dma_alloc\n");
 
 	/* Allocate DMA trace buffer */
 	err = axl_aipu_trace_alloc(axldev, dma_trace_entries);
@@ -1264,24 +1274,30 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		dev_warn(
 			&pdev->dev,
 			"Failed to allocate DMA trace buffer, tracing disabled\n");
+	dev_info(&pdev->dev, "axl_probe[15] after trace_alloc\n");
 
 	err = axl_aipu_create_device(axldev);
 	if (err)
 		goto err_dev_out;
+	dev_info(&pdev->dev, "axl_probe[16] after create_device\n");
 
 	err = axl_aipu_drv_recovery_init(axldev);
 	if (err)
 		goto err_dev_out;
+	dev_info(&pdev->dev, "axl_probe[17] after drv_recovery_init\n");
 
 	err = axl_aipu_dma_init(axldev);
 	if (err)
 		goto err_dev_out;
+	dev_info(&pdev->dev, "axl_probe[18] after dma_init\n");
 
 	err = axl_pci_msi_init(pdev, axldev);
 	if (err)
 		goto err_dev_out;
+	dev_info(&pdev->dev, "axl_probe[19] after pci_msi_init\n");
 
 	axl_aipu_dev_debugfs_init(axldev);
+	dev_info(&pdev->dev, "axl_probe[20] after debugfs_init - probe DONE\n");
 
 	return 0;
 
