@@ -593,7 +593,18 @@ free_sgt:
 put_pages:
 	for (i = 0; i < nr_pages; i++) {
 		if (page_list[i]) {
-			if (dir == DMA_TO_DEVICE)
+			/*
+			 * Mark the page dirty if the device wrote into it,
+			 * so the VM doesn't think a page that was just
+			 * DMA-filled is still clean and possibly drop the
+			 * write. The original code tested DMA_TO_DEVICE,
+			 * which is the opposite case (CPU memory is the
+			 * source, device only reads). Use the user-facing
+			 * flag directly: DMABUF_XFER_FLAG_READ means the
+			 * caller is reading from the device, i.e. the
+			 * device wrote our pages.
+			 */
+			if (xfer.flags & DMABUF_XFER_FLAG_READ)
 				set_page_dirty_lock(page_list[i]);
 			put_page(page_list[i]);
 		}
