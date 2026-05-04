@@ -185,7 +185,7 @@ MODULE_PARM_DESC(
  *   6  + axl_aipu_dma_enable_ctrl  (turn on the DMA controller)  (default)
  */
 #ifndef AXL_MSI_INIT_STAGE
-#define AXL_MSI_INIT_STAGE 5
+#define AXL_MSI_INIT_STAGE 6
 #endif
 
 /*
@@ -1610,6 +1610,21 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	return 0;
 
 err_dev_out:
+	/*
+	 * Stop the recovery kthread before tearing down devm allocations.
+	 * Original probe-failure cleanup didn't do this; if probe got past
+	 * axl_aipu_drv_recovery_init (i.e. axldev->recovery is non-NULL)
+	 * and then a later step failed, the kthread would outlive its
+	 * backing axldev (devm-freed by devres_release_all() once we
+	 * return non-zero), and the next time anything dereferenced
+	 * the now-freed module text or axldev fields the kernel oopsed.
+	 * Same fix that the AXL_PROBE_GATE_RETURN partial-unwind path
+	 * already does for the staged-bisect case.
+	 */
+	if (axldev->recovery) {
+		kthread_stop(axldev->recovery);
+		axldev->recovery = NULL;
+	}
 	axl_aipu_dma_deinit(axldev);
 	device_destroy(axl_aipu_class, MKDEV(axl_aipu_major, axldev->minor));
 	cdev_del(&axldev->cdev);
