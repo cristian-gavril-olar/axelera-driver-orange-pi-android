@@ -60,6 +60,24 @@
 #define AXELERA_VENDOR_ID	  0x1F9D
 #define AXL_AIPU_ALPHA_DEVICE_ID  0x11AA
 #define AXL_AIPU_OMEGA_DEVICE_ID  0x1100
+
+/*
+ * Metis fallback / unprogrammed PCI identity.
+ *
+ * On Orange Pi 5 + RK3588 we have observed the Metis card coming up
+ * after a wedged-PCIe state with vendor 0x16c3 / device 0xabcd, class
+ * 0x000000, instead of its real 0x1f9d / 0x1100, class 0x120000. The
+ * card's own BAR sizes are also bogus in this state. A clean reboot
+ * normally restores the proper IDs, but sometimes the card stays in
+ * fallback for several reboots until full power is removed.
+ *
+ * Match this fallback ID as well so the driver binds in either state
+ * and can attempt to recover. The probe path will still see bogus BAR
+ * sizes when the card is in fallback, so the rest of the recovery
+ * (firmware reload / reset) has to happen there.
+ */
+#define AXL_AIPU_METIS_FALLBACK_VENDOR	  0x16C3
+#define AXL_AIPU_METIS_FALLBACK_DEVICE_ID 0xABCD
 #define AXL_AIPU_EUROPA_DEVICE_ID 0x0001
 
 #define METIS_CLASS_CODE  0x1200
@@ -1555,6 +1573,12 @@ static const struct pci_device_id axl_pci_tbl[] = {
 	{ AXE_PCI_DEVICE_IDS(AXL_AIPU_OMEGA_DEVICE_ID,
 			     axl_aipu_silicon_device_info) },
 	{ AXE_PCI_DEVICE_IDS(AXL_AIPU_EUROPA_DEVICE_ID, axl_aipu_europa) },
+	/* Fallback / unprogrammed Metis identity (RK3588 OPi5 quirk). */
+	{ .vendor	= AXL_AIPU_METIS_FALLBACK_VENDOR,
+	  .device	= AXL_AIPU_METIS_FALLBACK_DEVICE_ID,
+	  .subvendor	= PCI_ANY_ID,
+	  .subdevice	= PCI_ANY_ID,
+	  .driver_data	= (kernel_ulong_t)&axl_aipu_silicon_device_info },
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, axl_pci_tbl);
