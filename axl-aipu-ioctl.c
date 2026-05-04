@@ -766,7 +766,13 @@ static long sysctl_ioctl_dma_p2p_xfer(struct file *file, unsigned long arg)
 	struct dma_queue_ctrl *dma_ctrl = NULL;
 	struct dma_p2p_xfer xfer;
 
-	int err, channel, status, max_dma_ch = axldev->dev_info->dma_rd_ch;
+	/*
+	 * 'err' is only assigned inside the DMABUF_XFER_FLAG_SYNC branch,
+	 * but read again on the fall-through return at end of function
+	 * (in case the caller passed neither SYNC nor ASYNC flag).
+	 * Default to 0 so the fall-through reports "submitted, no wait".
+	 */
+	int err = 0, channel, status, max_dma_ch = axldev->dev_info->dma_rd_ch;
 	struct dma_wrk *dma_wrk;
 
 	if (sys_ctx &&
