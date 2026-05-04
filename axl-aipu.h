@@ -326,7 +326,7 @@ struct dev_mem_window {
 struct axl_pcie_aipu_dev {
 	char name[NAME_SIZE];
 	struct pci_dev *pdev;
-	int dma_enabled : 1;
+	unsigned int dma_enabled : 1;
 	struct device_host_drv_t *hdrv_base;
 	dma_addr_t dma_addr;
 	dma_addr_t dma_addr_unaligned;
