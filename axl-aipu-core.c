@@ -1277,6 +1277,25 @@ static int axl_aipu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct axl_pcie_aipu_dev *axldev;
 	int err;
 
+	/*
+	 * Bail cleanly if the Metis card is in its fallback / unprogrammed
+	 * PCI identity (16c3:abcd). In that state the card's BAR sizes
+	 * and config space are bogus, and probe steps that touch it
+	 * (pcim_enable_device, BAR mapping, etc.) wedge the PCIe bus
+	 * and hard-lock CPUs. Returning -ENODEV here lets the module
+	 * stay loaded; once the card is recovered (full power off,
+	 * reboot) the kernel will re-probe automatically with the
+	 * proper 1f9d:1100 identity.
+	 */
+	if (pdev->vendor == AXL_AIPU_METIS_FALLBACK_VENDOR &&
+	    pdev->device == AXL_AIPU_METIS_FALLBACK_DEVICE_ID) {
+		dev_err(&pdev->dev,
+			"Metis card in fallback PCI ID (%04x:%04x) — recover by full power-off (unplug 5V + USB for 30s) and reboot.\n",
+			pdev->vendor, pdev->device);
+		return -ENODEV;
+	}
+
+
 	axldev = axl_aipu_allocate_device(pdev, id);
 	if (IS_ERR(axldev))
 		return PTR_ERR(axldev);
