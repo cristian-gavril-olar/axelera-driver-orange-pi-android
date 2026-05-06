@@ -240,11 +240,12 @@ static int axl_aipu_msi_init(struct axl_pcie_aipu_dev *axldev)
 	get_cached_msi_msg(axldev->irq_vec, &axldev->irq_msi);
 	AXL_MSI_FOPS_GATE_RETURN(pdev, 3);
 
-	/* DEFERRED: see Metis-side comment in axl-aipu-msi-metis.c. The
-	 * matching call now lives in sysctl_ioctl_dynmem_load. */
-	axldev->msi_imwr_primed = 0;
 	dev_info(&pdev->dev,
-		 "axl_msi_fops: dma_init_imwr deferred to AXL_IOCTL_DYNMEM_LOAD\n");
+		 "axl_msi_fops stage 4: dma_init_imwr (MSI addr=0x%08x:0x%08x data=0x%08x)\n",
+		 axldev->irq_msi.address_hi, axldev->irq_msi.address_lo,
+		 axldev->irq_msi.data);
+	axl_aipu_dma_init_imwr(axldev);
+	dev_info(&pdev->dev, "axl_msi_fops: dma_init_imwr returned\n");
 
 	dev_info(&pdev->dev, "axl_msi_fops: complete\n");
 	return 0;

@@ -719,14 +719,9 @@ static int axl_pci_msi_init(struct pci_dev *pdev,
 		axldev->irq_msi.data);
 	AXL_MSI_INIT_GATE_RETURN(pdev, 5);
 
-	/*
-	 * dma_enable_ctrl is deferred to AXL_IOCTL_DYNMEM_LOAD alongside
-	 * dma_init_imwr. Touching the HDMA channels' ch_en registers from
-	 * probe wedges the AXI bus on RK3588 OPi5 + outband-MSI rk-pcie
-	 * before the on-device runtime is up. See axldev->msi_imwr_primed.
-	 */
-	dev_info(&pdev->dev,
-		 "axl_msi_init: dma_enable_ctrl deferred to AXL_IOCTL_DYNMEM_LOAD\n");
+	dev_info(&pdev->dev, "axl_msi_init stage 6: axl_aipu_dma_enable_ctrl\n");
+	axl_aipu_dma_enable_ctrl(axldev);
+	dev_info(&pdev->dev, "axl_msi_init: dma_enable_ctrl returned\n");
 
 	dev_info(&pdev->dev, "axl_msi_init: complete\n");
 	return 0;

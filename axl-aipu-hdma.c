@@ -80,12 +80,18 @@ static int axl_aipu_hdma_dma_irq_ck(struct axl_pcie_aipu_dev *axldev, int id)
 static void axl_aipu_hdma_enable_ctrl(struct axl_pcie_aipu_dev *axldev)
 {
 	struct dw_hdma_v0_regs *hdma = axldev->dma;
+	struct pci_dev *pdev = axldev->pdev;
 	int i;
 
+	dev_info(&pdev->dev, "hdma_enable_ctrl: hdma=%p\n", hdma);
 	for (i = 0; i < HDMA_V0_MAX_NR_CH; i++) {
+		dev_info(&pdev->dev, "  ch%d: rd.ch_en @ %p\n", i, &hdma->ch[i].rd.ch_en);
 		writel(BIT(0), &hdma->ch[i].rd.ch_en);
+		dev_info(&pdev->dev, "  ch%d: rd.ch_en OK; wr.ch_en @ %p\n", i, &hdma->ch[i].wr.ch_en);
 		writel(BIT(0), &hdma->ch[i].wr.ch_en);
+		dev_info(&pdev->dev, "  ch%d: wr.ch_en OK\n", i);
 	}
+	dev_info(&pdev->dev, "hdma_enable_ctrl: done\n");
 }
 static void axl_aipu_hdma_int_setup(struct dma_wrk *dma_wrk)
 {
@@ -115,6 +121,7 @@ static void axl_aipu_hdma_int_setup(struct dma_wrk *dma_wrk)
 static void axl_aipu_hdma_init_imwr(struct axl_pcie_aipu_dev *axldev)
 {
 	volatile struct dw_hdma_v0_regs *hdma = axldev->dma;
+	struct pci_dev *pdev = axldev->pdev;
 	int i;
 	enum dw_hdma_dir dir;
 	u32 setup;
@@ -122,21 +129,32 @@ static void axl_aipu_hdma_init_imwr(struct axl_pcie_aipu_dev *axldev)
 	volatile struct dw_hdma_ll_buf *hwlldch =
 		(struct dw_hdma_ll_buf *)axl_aipu_hdma_get_ll_desc_base(axldev);
 
+	dev_info(&pdev->dev,
+		 "hdma_init_imwr: hdma=%p msi_addr=0x%08x:0x%08x data=0x%08x ll_base=%p\n",
+		 hdma, axldev->irq_msi.address_hi, axldev->irq_msi.address_lo,
+		 axldev->irq_msi.data, hwlldch);
+
 	for (i = 0; i < HDMA_V0_MAX_NR_CH; i++) {
 		dir = DW_HDMA_DIR_READ;
+		dev_info(&pdev->dev, "  READ ch%d: msi_stop.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_stop.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  READ ch%d: msi_stop.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_stop.msb, i,
 			     axldev->irq_msi.address_hi);
+		dev_info(&pdev->dev, "  READ ch%d: msi_abort.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_abort.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  READ ch%d: msi_abort.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_abort.msb, i,
 			     axldev->irq_msi.address_hi);
+		dev_info(&pdev->dev, "  READ ch%d: msi_watermark.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_watermark.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  READ ch%d: msi_watermark.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_watermark.msb, i,
 			     axldev->irq_msi.address_hi);
-
+		dev_info(&pdev->dev, "  READ ch%d: msi_msgdata\n", i);
 		if (axldev->nmsi == 1) {
 			SET_RW_32_CH(hdma, dir, msi_msgdata, i,
 				     axldev->irq_msi.data);
@@ -144,32 +162,41 @@ static void axl_aipu_hdma_init_imwr(struct axl_pcie_aipu_dev *axldev)
 			SET_RW_32_CH(hdma, dir, msi_msgdata, i,
 				     PMSI_DMA_RD_CH0 + i);
 		}
+		dev_info(&pdev->dev, "  READ ch%d: int_setup (read-modify-write)\n", i);
 		setup = GET_RW_32_CH(hdma, dir, int_setup, i);
 		setup &= ~(HDMA_V0_STOP_INT_MASK | HDMA_V0_ABORT_INT_MASK);
 		setup |= HDMA_V0_REMOTE_STOP_INT_EN |
 			 HDMA_V0_REMOTE_ABORT_INT_EN;
 		SET_RW_32_CH(hdma, dir, int_setup, i, setup);
+		dev_info(&pdev->dev, "  READ ch%d: control1\n", i);
 		SET_RW_32_CH(hdma, dir, control1, i, HDMA_V0_LINKLIST_EN);
-
+		dev_info(&pdev->dev, "  READ ch%d: llp\n", i);
 		tmp = __get_ll_base(hwlldch, dir, i);
 		SET_RW_32_CH(hdma, dir, llp.lsb, i, lower_32_bits(tmp));
 		SET_RW_32_CH(hdma, dir, llp.msb, i, upper_32_bits(tmp));
+		dev_info(&pdev->dev, "  READ ch%d: done\n", i);
 	}
 	for (i = 0; i < HDMA_V0_MAX_NR_CH; i++) {
 		dir = DW_HDMA_DIR_WRITE;
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_stop.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_stop.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_stop.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_stop.msb, i,
 			     axldev->irq_msi.address_hi);
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_abort.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_abort.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_abort.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_abort.msb, i,
 			     axldev->irq_msi.address_hi);
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_watermark.lsb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_watermark.lsb, i,
 			     axldev->irq_msi.address_lo);
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_watermark.msb\n", i);
 		SET_RW_32_CH(hdma, dir, msi_watermark.msb, i,
 			     axldev->irq_msi.address_hi);
-
+		dev_info(&pdev->dev, "  WRITE ch%d: msi_msgdata\n", i);
 		if (axldev->nmsi == 1) {
 			SET_RW_32_CH(hdma, dir, msi_msgdata, i,
 				     axldev->irq_msi.data);
@@ -177,17 +204,21 @@ static void axl_aipu_hdma_init_imwr(struct axl_pcie_aipu_dev *axldev)
 			SET_RW_32_CH(hdma, dir, msi_msgdata, i,
 				     PMSI_DMA_WR_CH0 + i);
 		}
+		dev_info(&pdev->dev, "  WRITE ch%d: int_setup (read-modify-write)\n", i);
 		setup = GET_RW_32_CH(hdma, dir, int_setup, i);
 		setup &= ~(HDMA_V0_STOP_INT_MASK | HDMA_V0_ABORT_INT_MASK);
 		setup |= HDMA_V0_REMOTE_STOP_INT_EN |
 			 HDMA_V0_REMOTE_ABORT_INT_EN;
 		SET_RW_32_CH(hdma, dir, int_setup, i, setup);
+		dev_info(&pdev->dev, "  WRITE ch%d: control1\n", i);
 		SET_RW_32_CH(hdma, dir, control1, i, HDMA_V0_LINKLIST_EN);
-
+		dev_info(&pdev->dev, "  WRITE ch%d: llp\n", i);
 		tmp = __get_ll_base(hwlldch, dir, i);
 		SET_RW_32_CH(hdma, dir, llp.lsb, i, lower_32_bits(tmp));
 		SET_RW_32_CH(hdma, dir, llp.msb, i, upper_32_bits(tmp));
+		dev_info(&pdev->dev, "  WRITE ch%d: done\n", i);
 	}
+	dev_info(&pdev->dev, "hdma_init_imwr: complete\n");
 }
 
 static inline int dma_wait_irq(struct axl_pcie_aipu_dev *axldev,

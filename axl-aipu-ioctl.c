@@ -467,12 +467,6 @@ static long sysctl_ioctl_usr_dma_xfer(struct file *file, unsigned long arg)
 	 */
 	enum dma_data_direction dir = DMA_BIDIRECTIONAL;
 
-	if (!axldev->msi_imwr_primed) {
-		dev_warn_ratelimited(&pdev->dev,
-				     "DMA xfer rejected: device not primed; userspace must issue AXL_IOCTL_DYNMEM_LOAD after fwload first\n");
-		return -ENXIO;
-	}
-
 	if (copy_from_user(&xfer, (void __user *)arg, sizeof(struct dma_xfer)))
 		return -EFAULT;
 
@@ -637,12 +631,6 @@ static long sysctl_ioctl_dma_xfer(struct file *file, unsigned long arg)
 	unsigned long size = 0;
 	struct dma_wrk *dma_wrk;
 
-	if (!axldev->msi_imwr_primed) {
-		dev_warn_ratelimited(&pdev->dev,
-				     "DMA xfer rejected: device not primed; userspace must issue AXL_IOCTL_DYNMEM_LOAD after fwload first\n");
-		return -ENXIO;
-	}
-
 	if (sys_ctx &&
 	    atomic_read(&sys_ctx->async_dma_xfer) == ASYNC_XFER_PENDING) {
 		dev_err(&pdev->dev,
@@ -797,12 +785,6 @@ static long sysctl_ioctl_dma_p2p_xfer(struct file *file, unsigned long arg)
 	int err = 0, channel, status, max_dma_ch = axldev->dev_info->dma_rd_ch;
 	struct dma_wrk *dma_wrk;
 
-	if (!axldev->msi_imwr_primed) {
-		dev_warn_ratelimited(&pdev->dev,
-				     "DMA xfer rejected: device not primed; userspace must issue AXL_IOCTL_DYNMEM_LOAD after fwload first\n");
-		return -ENXIO;
-	}
-
 	if (sys_ctx &&
 	    atomic_read(&sys_ctx->async_dma_xfer) == ASYNC_XFER_PENDING) {
 		dev_err(&pdev->dev,
@@ -901,26 +883,6 @@ static long sysctl_ioctl_dynmem_load(struct file *file, unsigned long arg)
 	axl_aipu_config_dev_dma(axldev);
 	axl_aipu_config_dev_msi(axldev);
 	axl_aipu_dev_dynmem_init(axldev);
-
-	/*
-	 * Deferred from msi_fops->init / axl_pci_msi_init at probe time —
-	 * see notes/explanation-of-what-fails.md. By the time userspace
-	 * has issued AXL_IOCTL_DYNMEM_LOAD the on-device runtime is up,
-	 * the device-host shared-memory regions are populated, and it's
-	 * safe to program the HDMA channels' MSI delivery + linked-list
-	 * descriptor registers and to flip the per-channel ch_en bits.
-	 * Order matches the original probe: dma_init_imwr first (program
-	 * delivery), then dma_enable_ctrl (flip ch_en). Idempotent on
-	 * re-flash: a second DYNMEM_LOAD just reprograms with whatever's
-	 * currently cached in axldev->irq_msi.
-	 */
-	if (!axldev->msi_imwr_primed) {
-		dev_info(&pdev->dev,
-			 "AXL_IOCTL_DYNMEM_LOAD: priming HDMA MSI delivery + enabling channels (deferred from probe)\n");
-		axl_aipu_dma_init_imwr(axldev);
-		axl_aipu_dma_enable_ctrl(axldev);
-		axldev->msi_imwr_primed = 1;
-	}
 
 	return 0;
 }

@@ -162,19 +162,12 @@ static int axl_aipu_msi_metis_init(struct axl_pcie_aipu_dev *axldev)
 	get_cached_msi_msg(axldev->irq_vec, &axldev->irq_msi);
 	AXL_MSI_METIS_FOPS_GATE_RETURN(pdev, 3);
 
-	/*
-	 * DEFERRED: axl_aipu_dma_init_imwr() — programs the HDMA channels'
-	 * msi_stop / msi_abort / msi_watermark / msi_msgdata / int_setup /
-	 * llp registers. Calling this at probe time wedges the AXI bus on
-	 * RK3588 OPi5 (outband-MSI rk-pcie controller's mailbox is never
-	 * armed by rk_pcie_msi_host_init's no-op override; the first MSI
-	 * the device tries to deliver after we flip REMOTE_*_INT_EN
-	 * stalls). Defer to sysctl_ioctl_dynmem_load (the post-fwload
-	 * ioctl); see notes/explanation-of-what-fails.md.
-	 */
-	axldev->msi_imwr_primed = 0;
 	dev_info(&pdev->dev,
-		 "axl_msi_metis_fops: dma_init_imwr deferred to AXL_IOCTL_DYNMEM_LOAD\n");
+		 "axl_msi_metis_fops stage 4: dma_init_imwr (MSI addr=0x%08x:0x%08x data=0x%08x)\n",
+		 axldev->irq_msi.address_hi, axldev->irq_msi.address_lo,
+		 axldev->irq_msi.data);
+	axl_aipu_dma_init_imwr(axldev);
+	dev_info(&pdev->dev, "axl_msi_metis_fops: dma_init_imwr returned\n");
 
 	dev_info(&pdev->dev, "axl_msi_metis_fops: complete\n");
 	return 0;
